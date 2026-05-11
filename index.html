@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>푸드트럭 주문 시스템</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,'Noto Sans KR',sans-serif;}
+body{background:linear-gradient(135deg,#fef4e0,#fff);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+.box{background:#fff;border-radius:20px;padding:32px 24px;box-shadow:0 10px 40px rgba(208,128,16,.15);max-width:420px;width:100%;text-align:center;}
+h1{color:#d08010;font-size:28px;margin-bottom:8px;}
+.sub{color:#888;font-size:14px;margin-bottom:24px;}
+.link{display:block;padding:16px;margin:10px 0;border-radius:12px;text-decoration:none;font-size:16px;font-weight:700;transition:transform .15s;}
+.link:hover{transform:translateY(-2px);}
+.l-customer{background:#fff5e0;color:#a05000;border:2px solid #d08010;}
+.l-staff{background:#f0e8ff;color:#5040a0;border:2px solid #a060c0;}
+.l-display{background:#e8f5e8;color:#208040;border:2px solid #40c060;}
+.foot{font-size:11px;color:#aaa;margin-top:20px;}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>🍔 푸드트럭</h1>
+  <div class="sub">접속할 페이지를 선택하세요</div>
+  <a href="customer.html" class="link l-customer">📱 주문하기 (손님용)</a>
+  <a href="staff.html" class="link l-staff">👥 직원 도우미</a>
+  <a href="display.html" class="link l-display">📺 호출 디스플레이</a>
+  <div class="foot">QR 스캔하면 알맞은 페이지로 바로 이동합니다</div>
+</div>
+</body>
+</html>
