@@ -290,6 +290,64 @@ async function init() {
   renderCats();
   renderMenu();
   loadHistory();
+
+  // 진행 중인 주문 복구 — 폰 닫았다 다시 들어왔을 때 상태 화면으로
+  await ftRestoreActiveOrder();
+}
+
+async function ftRestoreActiveOrder(){
+  if(!menuData.foodtruckMode) return;
+  let saved;
+  try{ saved = JSON.parse(localStorage.getItem('ft_active_order')||'null'); }catch(e){}
+  if(!saved || !saved.pickup) return;
+  // 24시간 지났으면 그냥 삭제
+  if(saved.savedAt && Date.now() - saved.savedAt > 24*60*60*1000){
+    localStorage.removeItem('ft_active_order');
+    return;
+  }
+  // 서버에 상태 조회
+  try{
+    const res = await fetch(API_BASE + '/api/ft/status?pickup=' + saved.pickup);
+    if(!res.ok){ localStorage.removeItem('ft_active_order'); return; }
+    const d = await res.json();
+    if(!d.ok){ localStorage.removeItem('ft_active_order'); return; }
+    // 종료 상태는 복구 안 함 (수령/취소/만료)
+    if(['done','canceled','expired'].includes(d.status)){
+      localStorage.removeItem('ft_active_order');
+      return;
+    }
+    ftCurPickup = saved.pickup;
+    ftExpireAt = saved.expireAt;
+    // pending이면 결제 화면, 그 외엔 상태 화면
+    if(d.status === 'pending'){
+      // 재구성된 pay 정보 필요 — /api/menu에서 payInfo 가져옴
+      const pay = (menuData.payInfo) || {};
+      ftShowPayScreen({
+        sname: menuData.sname || '',
+        pickup: saved.pickup,
+        total: d.total || 0,
+        pay: {
+          bank: pay.bank || '',
+          account: pay.account || '',
+          holder: pay.holder || '',
+          kakaopayQR: pay.kakaopayQR || '',
+          showAccount: pay.showAccount !== false,
+          showQR: pay.showQR !== false,
+          expireMinutes: pay.expireMinutes || 10,
+        },
+      });
+    }else{
+      // paid/cooking/ready → 상태 화면
+      document.getElementById('ft-status-pickup').textContent = ftCurPickup;
+      document.getElementById('ft-status-icon').textContent = '⏳';
+      document.getElementById('ft-status-title').textContent = '주문 진행 중';
+      document.getElementById('ft-status-sub').textContent = '잠시만 기다려주세요';
+      document.getElementById('ft-status-overlay').style.display = 'block';
+      ftStartStatusPolling();
+    }
+  }catch(e){
+    console.warn('주문 복구 실패:', e);
+  }
 }
 
 // ── 카테고리 ──
@@ -703,6 +761,14 @@ async function ftSubmitOrder() {
     ftExpireAt = r.expireAt;
     closeCart();
     ftShowPayScreen(r);
+    // 페이지 닫혀도 복구 가능하게 저장
+    try{
+      localStorage.setItem('ft_active_order', JSON.stringify({
+        pickup: r.pickup,
+        expireAt: r.expireAt,
+        savedAt: Date.now(),
+      }));
+    }catch(e){}
   } catch (e) {
     ctoast('서버 연결 실패 — Wi-Fi 확인');
   }
@@ -711,6 +777,12 @@ async function ftSubmitOrder() {
 }
 
 function ftShowPayScreen(r) {
+  if(r && r.eventBonus){
+    ftShowEventWin(r.eventBonus, r.pickup);
+  }
+  if(r && r.rouletteEligible && r.roulettePool && r.roulettePool.length){
+    setTimeout(()=>ftShowRoulette(r.pickup, r.roulettePool), 600);
+  }
   document.getElementById('ft-pay-store').textContent = r.sname || (menuData.sname || '');
   document.getElementById('ft-pay-pickup').textContent = r.pickup;
   document.getElementById('ft-pay-amount').textContent = (r.total || 0).toLocaleString() + '원';
@@ -785,6 +857,176 @@ function ftStartStatusPolling() {
   ftStatusInt = setInterval(tick, 2500);
 }
 
+// 🎰 룰렛 — N번째 손님 행운 룰렛
+function ftShowRoulette(pickup, pool){
+  if(!pool || !pool.length) return;
+  // 슬롯: 메뉴 풀 + "꽝" 1~2개
+  const slots = [];
+  pool.forEach(p => slots.push({ kind:'win', ...p }));
+  // 꽝 1개 추가 (긴장감용)
+  if(pool.length >= 2) slots.push({ kind:'lose', name:'꽝', emoji:'😿' });
+  // 슬롯 수가 너무 적으면 메뉴 중복 추가해서 6개 정도
+  while(slots.length < 6){
+    const dup = pool[Math.floor(Math.random()*pool.length)];
+    slots.push({ kind:'win', ...dup });
+  }
+  // 셔플
+  slots.sort(()=>Math.random()-0.5);
+
+  const sliceAngle = 360 / slots.length;
+  const palette = ['#d08010','#208040','#0066cc','#a060c0','#c04060','#d0a020','#40a0a0','#806040'];
+
+  const slicesHtml = slots.map((s,i)=>{
+    const angle = sliceAngle * i;
+    const color = palette[i % palette.length];
+    const label = (s.emoji||'') + (s.kind==='lose' ? '꽝' : (s.name.length>5 ? s.name.slice(0,4)+'…' : s.name));
+    return `<div class="rou-slice" style="transform:rotate(${angle}deg);background:${color};">
+      <span style="transform:rotate(${sliceAngle/2}deg);">${label}</span>
+    </div>`;
+  }).join('');
+
+  const html = `<div id="ft-rou-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;">
+    <div style="background:#fff;border-radius:24px;padding:24px 16px;max-width:380px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);">
+      <div style="font-size:18px;font-weight:900;color:#d08010;margin-bottom:6px;">🎰 행운의 룰렛</div>
+      <div style="font-size:12px;color:#666;margin-bottom:18px;">${pickup}번 손님 — 매장 N번째 주문 행운!</div>
+      <div style="position:relative;width:280px;height:280px;margin:0 auto;">
+        <div style="position:absolute;top:-8px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:14px solid transparent;border-right:14px solid transparent;border-top:24px solid #c00;z-index:10;"></div>
+        <div id="rou-wheel" style="position:relative;width:100%;height:100%;border-radius:50%;overflow:hidden;border:6px solid #d08010;box-shadow:0 8px 24px rgba(0,0,0,.3);transition:transform 4s cubic-bezier(.17,.67,.13,1.01);">
+          ${slicesHtml}
+        </div>
+      </div>
+      <button id="rou-spin-btn" style="margin-top:20px;width:100%;padding:16px;background:linear-gradient(90deg,#d08010,#e09020);color:#fff;border:none;border-radius:12px;font-size:18px;font-weight:900;cursor:pointer;box-shadow:0 4px 12px rgba(208,128,16,.4);">돌리기 🎰</button>
+      <div id="rou-result" style="margin-top:14px;font-size:14px;color:#666;min-height:20px;"></div>
+    </div>
+  </div>
+  <style>
+    .rou-slice{position:absolute;top:0;left:50%;width:50%;height:50%;transform-origin:0% 100%;clip-path:polygon(0 0,100% 0,100% 100%);display:flex;align-items:flex-start;justify-content:center;padding-top:14px;}
+    .rou-slice span{display:inline-block;font-size:12px;font-weight:800;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4);max-width:60px;text-align:center;line-height:1.1;}
+  </style>`;
+  const old = document.getElementById('ft-rou-overlay');
+  if(old) old.remove();
+  document.body.insertAdjacentHTML('beforeend', html);
+
+  let spun = false;
+  document.getElementById('rou-spin-btn').addEventListener('click', async ()=>{
+    if(spun) return;
+    spun = true;
+    const btn = document.getElementById('rou-spin-btn');
+    btn.disabled = true; btn.textContent = '돌리는 중...';
+    // 랜덤 슬롯 선택 (당첨률 80%로 살짝 유리하게)
+    const winSlots = slots.map((s,i)=>({s,i})).filter(x=>x.s.kind==='win');
+    const loseSlots = slots.map((s,i)=>({s,i})).filter(x=>x.s.kind==='lose');
+    const pickWin = Math.random() < 0.85 || !loseSlots.length;
+    const target = (pickWin ? winSlots : loseSlots)[Math.floor(Math.random()*(pickWin?winSlots.length:loseSlots.length))];
+    const targetIdx = target.i;
+    // 룰렛 회전 각도 — 화살표가 슬롯 중앙에 멈추도록
+    const stopAngle = 360 - (targetIdx * sliceAngle + sliceAngle/2);
+    const totalRotation = 360 * 6 + stopAngle; // 6바퀴 + 정착
+    const wheel = document.getElementById('rou-wheel');
+    wheel.style.transform = `rotate(${totalRotation}deg)`;
+    try{ if(navigator.vibrate) navigator.vibrate(200); }catch(e){}
+    setTimeout(()=>{
+      const prize = target.s;
+      const result = document.getElementById('rou-result');
+      if(prize.kind === 'win'){
+        result.innerHTML = `<div style="background:#fff5e0;border:2px solid #d08010;border-radius:10px;padding:12px;font-weight:800;color:#a05000;">🎉 ${prize.emoji||'🎁'} ${prize.name} 당첨! 픽업 시 받으세요</div>`;
+        try{ if(navigator.vibrate) navigator.vibrate([200,80,200,80,400]); }catch(e){}
+        try{
+          const ctx = new (window.AudioContext||window.webkitAudioContext)();
+          [523,659,784,1047].forEach((freq,i)=>{
+            const o=ctx.createOscillator(),g=ctx.createGain();
+            o.connect(g);g.connect(ctx.destination);
+            o.frequency.value=freq;
+            g.gain.setValueAtTime(0.2,ctx.currentTime+i*0.15);
+            g.gain.exponentialRampToValueAtTime(0.01,ctx.currentTime+(i+1)*0.15);
+            o.start(ctx.currentTime+i*0.15);
+            o.stop(ctx.currentTime+(i+1)*0.15);
+          });
+          setTimeout(()=>{try{ctx.close();}catch(e){}},1000);
+        }catch(e){}
+      }else{
+        result.innerHTML = `<div style="background:#f5f5f5;border:2px solid #aaa;border-radius:10px;padding:12px;font-weight:700;color:#666;">😿 아쉽게도 꽝! 다음 기회에...</div>`;
+      }
+      btn.textContent = '닫기';
+      btn.disabled = false;
+      btn.onclick = ()=>{ document.getElementById('ft-rou-overlay').remove(); };
+      // 결과 서버에 저장 (POS가 픽업 시 확인용)
+      try{
+        fetch(API_BASE + '/api/ft/roulette-result', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ pickup, prize: prize.kind==='win' ? {id:prize.id,name:prize.name,emoji:prize.emoji||'',price:prize.price||0} : null }),
+        });
+      }catch(e){}
+    }, 4100);
+  });
+}
+
+// 이벤트 당첨 축하 모달
+function ftShowEventWin(bonus, pickup){
+  if(!bonus || !bonus.name) return;
+  // 진동 + 사운드 + confetti 같은 효과
+  try{ if(navigator.vibrate) navigator.vibrate([200,80,200,80,400]); }catch(e){}
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const notes = [523, 659, 784, 1047]; // C E G C (장조 화음)
+    notes.forEach((freq,i)=>{
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.2, ctx.currentTime + i*0.15);
+      g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + (i+1)*0.15);
+      o.start(ctx.currentTime + i*0.15);
+      o.stop(ctx.currentTime + (i+1)*0.15);
+    });
+    setTimeout(()=>{ try{ctx.close();}catch(e){} }, 1000);
+  }catch(e){}
+  const html = `<div id="ft-event-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;animation:evFade .3s;">
+    <div style="background:linear-gradient(135deg,#fff5e0,#fff);border:3px solid #d08010;border-radius:24px;padding:32px 24px;max-width:360px;text-align:center;box-shadow:0 20px 60px rgba(208,128,16,.6);">
+      <div style="font-size:48px;margin-bottom:8px;">🎉🎊✨</div>
+      <div style="font-size:22px;font-weight:900;color:#d08010;margin-bottom:14px;">행운의 주문 당첨!</div>
+      <div style="font-size:13px;color:#666;margin-bottom:18px;">픽업번호 ${pickup||''}</div>
+      <div style="background:#fff;border:2px dashed #d08010;border-radius:14px;padding:18px;margin-bottom:18px;">
+        <div style="font-size:12px;color:#666;margin-bottom:4px;">증정 상품</div>
+        <div style="font-size:36px;margin:8px 0;">${bonus.emoji||'🎁'}</div>
+        <div style="font-size:24px;font-weight:900;color:#1a1610;">${bonus.name}</div>
+        <div style="font-size:12px;color:#888;margin-top:4px;">무료 증정!</div>
+      </div>
+      <div style="font-size:12px;color:#666;line-height:1.5;margin-bottom:14px;">픽업 시 사장님께 보여주시면<br>증정 상품을 함께 드려요</div>
+      <button onclick="document.getElementById('ft-event-overlay').remove();" style="width:100%;padding:14px;background:#d08010;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:900;cursor:pointer;">확인</button>
+    </div>
+  </div>
+  <style>@keyframes evFade{from{opacity:0;}to{opacity:1;}}</style>`;
+  // 기존 모달 제거 후 추가
+  const old = document.getElementById('ft-event-overlay');
+  if(old) old.remove();
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+// 주문 순서 표시 바
+function ftQueueBar(d){
+  const ahead = (typeof d.aheadInQueue === 'number') ? d.aheadInQueue : 0;
+  if(ahead === 0){
+    return `<div style="background:#e8f5e8;border:2px solid #20a040;border-radius:12px;padding:14px;margin:12px 0;text-align:center;">
+      <div style="font-size:14px;color:#108030;font-weight:700;margin-bottom:4px;">🎉 내 차례</div>
+      <div style="font-size:18px;color:#005a00;font-weight:900;">앞에 대기 없음 — 곧 시작합니다</div>
+    </div>`;
+  }
+  // 시각화: 사람 아이콘 N개 + 마지막에 내 위치 강조
+  const maxShow = 10;
+  const showCount = Math.min(ahead, maxShow);
+  let dots = '';
+  for(let i=0;i<showCount;i++) dots += '<span style="font-size:22px;opacity:.6;">🧑</span>';
+  if(ahead > maxShow) dots += `<span style="font-size:13px;color:#666;margin:0 4px;">+${ahead-maxShow}</span>`;
+  dots += '<span style="font-size:26px;margin-left:6px;">▶️</span><span style="font-size:22px;color:#d08010;font-weight:900;">나</span>';
+  return `<div style="background:#fff5e6;border:2px solid #d08010;border-radius:12px;padding:14px;margin:12px 0;text-align:center;">
+    <div style="font-size:13px;color:#666;margin-bottom:6px;">내 앞에 대기 중</div>
+    <div style="font-size:28px;font-weight:900;color:#d08010;margin-bottom:8px;">${ahead}명</div>
+    <div style="line-height:1.6;word-break:break-all;">${dots}</div>
+    <div style="font-size:11px;color:#888;margin-top:8px;">앞 주문이 완료되면 내 순서가 올라갑니다</div>
+  </div>`;
+}
+
 function ftRenderStatus(d) {
   const icon = document.getElementById('ft-status-icon');
   const title = document.getElementById('ft-status-title');
@@ -810,35 +1052,64 @@ function ftRenderStatus(d) {
       icon.textContent = '⏳';
       title.textContent = '입금 확인 대기 중';
       sub.textContent = '사장님이 입금을 확인하면 조리가 시작됩니다';
-      extra.innerHTML = '<button onclick="ftRequestRefund()" style="margin-top:14px;padding:10px 18px;border:1px solid #c00;background:#fff;color:#c00;border-radius:8px;font-weight:700;cursor:pointer;">환불 요청하기</button>';
+      extra.innerHTML = ftQueueBar(d) + '<button onclick="ftRequestRefund()" style="margin-top:14px;padding:10px 18px;border:1px solid #c00;background:#fff;color:#c00;border-radius:8px;font-weight:700;cursor:pointer;">환불 요청하기</button>';
     }
   } else if (d.status === 'paid') {
     icon.textContent = '✅';
     title.textContent = '입금 확인 완료';
     sub.textContent = '곧 조리를 시작합니다';
-    extra.textContent = '';
+    extra.innerHTML = ftQueueBar(d);
   } else if (d.status === 'cooking') {
     icon.textContent = '🍳';
     title.textContent = '조리 중';
     sub.textContent = '잠시만 기다려주세요';
-    extra.textContent = d.aheadCooking > 0 ? `앞에 ${d.aheadCooking}명 대기 중` : '곧 완성됩니다';
+    extra.innerHTML = ftQueueBar(d);
   } else if (d.status === 'ready') {
     if (ftLastStatus !== 'ready') {
-      // 호출 알림
-      try { if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 600]); } catch (e) {}
+      // 진동벨 부저 — 사각파 220Hz 떨림, 3번
+      try { if (navigator.vibrate) navigator.vibrate([400, 150, 400, 150, 400, 150, 800]); } catch (e) {}
       try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const o = ctx.createOscillator(), g = ctx.createGain();
-        o.connect(g); g.connect(ctx.destination);
-        o.frequency.value = 880; g.gain.value = .25;
-        o.start();
-        setTimeout(() => { o.frequency.value = 1320; }, 200);
-        setTimeout(() => { o.stop(); ctx.close(); }, 600);
+        const buzzCount = 3, onDur = 0.4, offDur = 0.18;
+        for (let i = 0; i < buzzCount; i++) {
+          const t0 = ctx.currentTime + i * (onDur + offDur);
+          const o = ctx.createOscillator();
+          o.type = 'square';
+          o.frequency.value = 220;
+          const g = ctx.createGain();
+          g.gain.setValueAtTime(0, t0);
+          g.gain.linearRampToValueAtTime(0.35, t0 + 0.02);
+          const lfo = ctx.createOscillator();
+          lfo.frequency.value = 30;
+          const lfoGain = ctx.createGain();
+          lfoGain.gain.value = 0.2;
+          lfo.connect(lfoGain); lfoGain.connect(g.gain);
+          o.connect(g); g.connect(ctx.destination);
+          o.start(t0); o.stop(t0 + onDur);
+          lfo.start(t0); lfo.stop(t0 + onDur);
+          g.gain.setValueAtTime(0.35, t0 + onDur - 0.02);
+          g.gain.linearRampToValueAtTime(0, t0 + onDur);
+        }
+        setTimeout(() => { try { ctx.close(); } catch (e) { } }, buzzCount * (onDur + offDur) * 1000 + 300);
       } catch (e) {}
-      document.body.style.background = '#fff5e6';
-      setTimeout(() => { document.body.style.background = ''; }, 200);
-      setTimeout(() => { document.body.style.background = '#fff5e6'; }, 400);
-      setTimeout(() => { document.body.style.background = ''; }, 600);
+      // TTS 음성
+      try {
+        const num = String(ftCurPickup||'').replace(/^[A-Za-z]+/, '').replace(/^0+/, '') || ftCurPickup;
+        setTimeout(() => {
+          if (!window.speechSynthesis) return;
+          const u = new SpeechSynthesisUtterance(num + '번 손님, 음식 나왔습니다');
+          u.lang = 'ko-KR'; u.volume = 1;
+          speechSynthesis.speak(u);
+        }, 1800);
+      } catch (e) {}
+      // 깜빡임
+      let n = 0;
+      const flashTick = () => {
+        n++;
+        document.body.style.background = (n % 2 === 1) ? '#fff5e6' : '';
+        if (n < 8) setTimeout(flashTick, 250);
+      };
+      flashTick();
     }
     icon.textContent = '📢';
     title.textContent = '픽업하세요!';
@@ -850,12 +1121,14 @@ function ftRenderStatus(d) {
     sub.textContent = '맛있게 드세요!';
     extra.innerHTML = '<button onclick="ftBackToMenu()" style="margin-top:14px;padding:12px 24px;border:none;border-radius:10px;background:#d08010;color:#fff;font-weight:800;cursor:pointer;">새 주문하기</button>';
     if (ftStatusInt) { clearInterval(ftStatusInt); ftStatusInt = null; }
+    try{ localStorage.removeItem('ft_active_order'); }catch(e){}
   } else if (d.status === 'expired' || d.status === 'canceled') {
     icon.textContent = '❌';
     title.textContent = d.status === 'expired' ? '주문 만료됨' : '주문 취소됨';
     sub.textContent = '다시 주문해주세요';
     extra.innerHTML = '<button onclick="ftBackToMenu()" style="margin-top:14px;padding:12px 24px;border:none;border-radius:10px;background:#d08010;color:#fff;font-weight:800;cursor:pointer;">메뉴로</button>';
     if (ftStatusInt) { clearInterval(ftStatusInt); ftStatusInt = null; }
+    try{ localStorage.removeItem('ft_active_order'); }catch(e){}
   }
   ftLastStatus = d.status;
 }

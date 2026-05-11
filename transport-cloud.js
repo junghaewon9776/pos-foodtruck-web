@@ -28,6 +28,26 @@
       foodtruckMode: !!v.foodtruckMode,
       pickupPrefix: v.pickupPrefix || 'A',
       payInfo: v.payInfo || {},
+      event: v.event || { enabled:false, probability:1000, menuIds:[] },
+    };
+  }
+
+  // 랜덤 이벤트 추첨 — 당첨 시 증정 메뉴 객체 반환, 아니면 null
+  function _rollEvent(menuData){
+    const ev = (menuData && menuData.event) || {};
+    if(!ev.enabled) return null;
+    const prob = parseInt(ev.probability, 10) || 1000;
+    const ids = ev.menuIds || [];
+    if(prob < 2 || !ids.length) return null;
+    if(Math.floor(Math.random() * prob) !== 0) return null; // 1/prob 확률
+    const pool = (menuData.menus || []).filter(m => ids.includes(m.id));
+    if(!pool.length) return null;
+    const winner = pool[Math.floor(Math.random() * pool.length)];
+    return {
+      id: winner.id,
+      name: winner.name,
+      emoji: winner.emoji || '',
+      price: winner.price || 0,
     };
   }
 
@@ -102,6 +122,18 @@
     const pi = menu.payInfo || {};
     const expMin = pi.expireMinutes || 10;
     const id = _genId();
+    // 랜덤 이벤트 추첨
+    const eventBonus = _rollEvent(menu);
+    // 룰렛 적격 판정 — 픽업번호 끝 N의 배수면 룰렛 등장
+    const ev = menu.event || {};
+    let rouletteEligible = false;
+    if(ev.rouletteEnabled && (ev.menuIds||[]).length){
+      const every = parseInt(ev.rouletteEvery,10) || 10;
+      const pickupNum = parseInt(String(pickup).replace(/^[A-Za-z]+/,''),10) || 0;
+      if(pickupNum > 0 && pickupNum % every === 0){
+        rouletteEligible = true;
+      }
+    }
     const order = {
       id, pickup, items: safe, total,
       status: 'pending',
@@ -114,6 +146,9 @@
       expireAt: now + expMin * 60 * 1000,
       paidAt: null, readyAt: null,
       paidAmount: 0,
+      eventBonus: eventBonus || null,
+      rouletteEligible,
+      rouletteResult: null, // 손님이 룰렛 돌린 결과 — 나중에 별도 업데이트
     };
     await FT.order(id).set(order);
     localStorage.setItem('ft_last_submit', String(now));
@@ -132,7 +167,21 @@
       },
       sname: menu.sname || '',
       _orderId: id,
+      eventBonus: eventBonus || null,
+      rouletteEligible,
+      roulettePool: rouletteEligible ? (menu.menus||[]).filter(m=>(menu.event.menuIds||[]).includes(m.id)).map(m=>({id:m.id,name:m.name,emoji:m.emoji||'',price:m.price||0})) : null,
     };
+  }
+
+  // 룰렛 결과 저장 (손님이 룰렛 돌린 후 호출)
+  async function _saveRouletteResult(orderId, prize){
+    if(!orderId) return { ok:false, msg:'orderId 없음' };
+    try{
+      await FT.order(orderId).update({ rouletteResult: prize || null });
+      return { ok:true };
+    }catch(e){
+      return { ok:false, msg:e.message };
+    }
   }
 
   // pickup → orderId 캐시 (status 조회 가속용)
@@ -152,14 +201,34 @@
   async function _getStatus(pickup) {
     const o = await _findOrderByPickup(pickup);
     if (!o) return { ok: false, msg: 'not found' };
+
+    // 전체 활성 주문 가져와서 큐 순서 계산
+    const allSnap = await FT.orders().once('value');
+    const all = Object.values(allSnap.val() || {}).filter(x => x && x.createdAt);
+    const today = new Date().toDateString();
+    const todayOrders = all.filter(x => new Date(x.createdAt).toDateString() === today);
+
     let aheadCooking = 0;
+    let aheadInQueue = 0; // 내 앞에서 아직 음식 안 받은 사람들
+
     if (o.status === 'cooking') {
-      const snap = await FT.orders().orderByChild('status').equalTo('cooking').once('value');
-      snap.forEach(s => {
-        const v = s.val();
-        if (v.paidAt && o.paidAt && v.paidAt < o.paidAt) aheadCooking++;
-      });
+      aheadCooking = todayOrders.filter(x =>
+        x.status === 'cooking' && x.paidAt && o.paidAt && x.paidAt < o.paidAt
+      ).length;
     }
+
+    // 큐 순서: 내가 아직 ready/done이 아니면, 내 앞에 활성 주문 카운트
+    if (['pending','paid','cooking'].includes(o.status)) {
+      aheadInQueue = todayOrders.filter(x => {
+        if (!['pending','paid','cooking','ready'].includes(x.status)) return false;
+        if (x.id === o.id) return false;
+        // 정렬 기준: paidAt(있으면) → createdAt
+        const myKey = o.paidAt || o.createdAt;
+        const xKey  = x.paidAt || x.createdAt;
+        return xKey < myKey;
+      }).length;
+    }
+
     return {
       ok: true,
       status: o.status,
@@ -167,12 +236,16 @@
       total: o.total,
       items: o.items,
       aheadCooking,
+      aheadInQueue,
       readyAt: o.readyAt || null,
       paidAmount: o.paidAmount || 0,
       shortBy: o.shortBy || 0,
       overBy: o.overBy || 0,
       refundRejected: !!o.refundRejected,
       refundRejectReason: o.refundRejectReason || '',
+      eventBonus: o.eventBonus || null,
+      rouletteEligible: !!o.rouletteEligible,
+      rouletteResult: o.rouletteResult || null,
     };
   }
 
@@ -235,6 +308,17 @@
       if (u.pathname === '/api/ft/refund-request' && init && init.method === 'POST') {
         const body = JSON.parse(init.body || '{}');
         const r = await _requestRefund(body.pickup, body.reason, body.account);
+        return _jsonResponse(r);
+      }
+
+      // /api/ft/roulette-result — 룰렛 결과 저장
+      if (u.pathname === '/api/ft/roulette-result' && init && init.method === 'POST') {
+        const body = JSON.parse(init.body || '{}');
+        // pickup → orderId 찾기
+        const o = await _findOrderByPickup(body.pickup);
+        if(!o) return _jsonResponse({ ok:false, msg:'주문 없음' });
+        const orderId = _pickupCache[body.pickup];
+        const r = await _saveRouletteResult(orderId, body.prize);
         return _jsonResponse(r);
       }
 
