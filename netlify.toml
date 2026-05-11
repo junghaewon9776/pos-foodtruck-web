@@ -1,0 +1,31 @@
+[build]
+  publish = "."
+
+[build.processing]
+  skip_processing = true
+
+[[redirects]]
+  from = "/order"
+  to = "/customer.html"
+  status = 200
+
+[[redirects]]
+  from = "/display"
+  to = "/display.html"
+  status = 200
+
+[[redirects]]
+  from = "/staff"
+  to = "/staff.html"
+  status = 200
+
+# 캐시 금지 — 코드 수정 즉시 반영
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"

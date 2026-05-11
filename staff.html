@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>푸드트럭 직원 도우미</title>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="firebase-config.js"></script>
+<style>
+:root{--bg:#f8f6f3;--card:#fff;--bdr:#e0d8c8;--acc:#d08010;--acc2:#b06800;--tx:#1a1610;--tx2:#5a5040;--tx3:#8a7a60;--grn:#208040;--red:#c00;--blue:#0066cc;--purp:#a060c0;}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;font-family:-apple-system,'Noto Sans KR',sans-serif;}
+html,body{height:100%;background:var(--bg);color:var(--tx);overflow-x:hidden;}
+.hdr{position:sticky;top:0;z-index:100;background:var(--bg);padding:10px 12px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.hdr h1{font-size:18px;font-weight:900;color:var(--acc);}
+.tabs{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap;}
+.tab{padding:6px 12px;border-radius:20px;border:1px solid var(--bdr);background:var(--card);color:var(--tx2);font-size:12px;font-weight:700;cursor:pointer;}
+.tab.active{background:var(--acc);color:#fff;border-color:var(--acc);}
+.tab .b{display:inline-block;min-width:18px;padding:1px 5px;border-radius:9px;background:rgba(255,255,255,.3);font-size:10px;margin-left:4px;}
+.tab:not(.active) .b{background:var(--acc);color:#fff;}
+.status-badge{font-size:11px;padding:3px 8px;border-radius:8px;background:#eee;color:#888;}
+.status-badge.online{background:#d8f5d8;color:#005a00;}
+.status-badge.offline{background:#ffe0e0;color:#900;}
+.list{padding:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;}
+.card{background:var(--card);border:1px solid var(--bdr);border-left:6px solid var(--bdr);border-radius:12px;padding:12px;}
+.card.pending{border-left-color:var(--red);}
+.card.paid{border-left-color:var(--blue);}
+.card.cooking{border-left-color:var(--acc);}
+.card.ready{border-left-color:var(--grn);}
+.card.new{animation:flash 1.5s ease-out;}
+@keyframes flash{0%{background:#fff5e0;transform:scale(1.02);}100%{background:#fff;}}
+.pickup{font-size:32px;font-weight:900;color:var(--tx);}
+.row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+.time{font-size:11px;color:var(--tx3);}
+.amt{font-size:14px;font-weight:800;color:var(--acc);}
+.items{font-size:13px;color:var(--tx2);line-height:1.5;margin:6px 0;}
+.note{font-size:12px;color:var(--tx3);background:#f0ede8;padding:6px;border-radius:6px;margin:4px 0;}
+.btns{display:flex;gap:6px;margin-top:8px;}
+.btn{flex:1;padding:10px;border:none;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;color:#fff;}
+.btn-confirm{background:var(--blue);}
+.btn-start{background:var(--acc);}
+.btn-ready{background:var(--grn);}
+.btn-done{background:#666;}
+.btn-cancel{background:#aaa;flex:0 0 60px;}
+.btn-undo{background:#999;flex:0 0 50px;font-size:14px;}
+.empty{grid-column:1/-1;text-align:center;padding:40px;color:var(--tx3);font-size:14px;}
+.mismatch{background:#ffe0e0;border:1px solid var(--red);padding:6px;border-radius:6px;font-size:11px;color:#900;font-weight:700;margin:4px 0;}
+.refund{background:#fff0f0;border:1px solid var(--red);padding:6px;border-radius:6px;font-size:11px;color:var(--red);font-weight:700;margin:4px 0;}
+.gate{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999;}
+.gate-box{background:#fff;border-radius:16px;padding:24px;width:90%;max-width:340px;text-align:center;}
+.gate-box h2{font-size:18px;margin-bottom:14px;color:var(--acc);}
+.gate-box input{width:100%;padding:14px;font-size:24px;text-align:center;border:2px solid var(--bdr);border-radius:10px;letter-spacing:8px;}
+.gate-box button{margin-top:12px;width:100%;padding:14px;border:none;border-radius:10px;background:var(--acc);color:#fff;font-size:15px;font-weight:800;cursor:pointer;}
+.gate-msg{font-size:12px;color:var(--red);margin-top:8px;min-height:18px;}
+.bottom{position:fixed;bottom:0;left:0;right:0;background:#000;color:#fff;padding:8px 14px;font-size:11px;text-align:center;opacity:.6;}
+@media (max-width:480px){
+  .list{grid-template-columns:1fr;}
+  .pickup{font-size:28px;}
+}
+</style>
+</head>
+<body>
+
+<!-- PIN 게이트 -->
+<div class="gate" id="gate" style="display:flex;">
+  <div class="gate-box">
+    <h2>🍔 직원 페이지</h2>
+    <div style="font-size:13px;color:#666;margin-bottom:12px;">직원용 PIN 4자리 입력</div>
+    <input id="pin-input" type="tel" maxlength="4" pattern="[0-9]*" inputmode="numeric" autocomplete="off">
+    <button onclick="checkPin()">확인</button>
+    <div class="gate-msg" id="pin-msg"></div>
+  </div>
+</div>
+
+<div class="hdr">
+  <h1 id="sname">🍔 직원 도우미</h1>
+  <span class="status-badge" id="conn-badge">―</span>
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-tab="pending" onclick="setTab('pending')">대기 <span class="b" id="c-pending">0</span></div>
+    <div class="tab" data-tab="paid" onclick="setTab('paid')">입금완료 <span class="b" id="c-paid">0</span></div>
+    <div class="tab" data-tab="cooking" onclick="setTab('cooking')">조리중 <span class="b" id="c-cooking">0</span></div>
+    <div class="tab" data-tab="ready" onclick="setTab('ready')">픽업대기 <span class="b" id="c-ready">0</span></div>
+  </div>
+</div>
+
+<div class="list" id="list"><div class="empty">로딩 중...</div></div>
+<div class="bottom">새 주문 자동 알림 · 화면 켜둔 채로 사용하세요</div>
+
+<script>
+const PIN_KEY = 'ft_staff_pin_v1';
+let curTab = 'pending';
+let allOrders = {};
+let lastKnownPending = new Set();
+let lastKnownRefund = new Set();
+let firstLoad = true;
+let audioCtx = null;
+
+// ── PIN 게이트 ───────────────────────────
+async function checkPin(){
+  const v = document.getElementById('pin-input').value.trim();
+  if(v.length<4){ showMsg('4자리를 입력하세요'); return; }
+  try{
+    const snap = await fbDb.ref('/foodtruck/meta/staffPin').once('value');
+    const pin = snap.val() || '0000';
+    if(v !== String(pin)){ showMsg('PIN이 다릅니다'); return; }
+    localStorage.setItem(PIN_KEY, v);
+    document.getElementById('gate').style.display='none';
+    init();
+  }catch(e){ showMsg('서버 연결 실패'); }
+}
+function showMsg(t){ document.getElementById('pin-msg').textContent = t; }
+
+document.getElementById('pin-input').addEventListener('keydown', e=>{
+  if(e.key==='Enter') checkPin();
+});
+
+// ── 초기화 ───────────────────────────────
+function init(){
+  // 익명 로그인 후 구독
+  fbAuth.signInAnonymously().catch(()=>{});
+  subscribe();
+  watchConnection();
+  // 첫 클릭으로 오디오 활성화
+  document.addEventListener('click', ()=>{ if(!audioCtx) audioCtx = new(window.AudioContext||window.webkitAudioContext)(); }, {once:true});
+}
+
+function watchConnection(){
+  fbDb.ref('.info/connected').on('value', s=>{
+    const ok = !!s.val();
+    const b = document.getElementById('conn-badge');
+    b.textContent = ok ? '☁️ 온라인' : '⚠️ 오프라인';
+    b.className = 'status-badge ' + (ok ? 'online' : 'offline');
+  });
+  fbDb.ref('/foodtruck/menu/sname').on('value', s=>{
+    const v = s.val();
+    if(v) document.getElementById('sname').textContent = '🍔 ' + v;
+  });
+}
+
+function subscribe(){
+  fbDb.ref('/foodtruck/orders').on('value', snap=>{
+    const v = snap.val() || {};
+    const today = new Date().toDateString();
+    allOrders = {};
+    Object.values(v).forEach(o=>{
+      if(o && o.createdAt && new Date(o.createdAt).toDateString()===today) {
+        allOrders[o.id] = o;
+      }
+    });
+    // 신규 pending 감지 → 알림
+    if(!firstLoad){
+      Object.values(allOrders).forEach(o=>{
+        if(o.status==='pending' && !lastKnownPending.has(o.id)){
+          beep(); vibrate();
+        }
+        if(o.refundRequested && !o.refundRejected && !lastKnownRefund.has(o.id)){
+          beep(2); vibrate();
+        }
+      });
+    }
+    lastKnownPending = new Set(Object.values(allOrders).filter(o=>o.status==='pending').map(o=>o.id));
+    lastKnownRefund = new Set(Object.values(allOrders).filter(o=>o.refundRequested && !o.refundRejected).map(o=>o.id));
+    firstLoad = false;
+    render();
+  });
+}
+
+function setTab(t){
+  curTab = t;
+  document.querySelectorAll('.tab').forEach(el=>el.classList.toggle('active', el.dataset.tab===t));
+  render();
+}
+
+function render(){
+  const groups = {pending:[],paid:[],cooking:[],ready:[]};
+  Object.values(allOrders).forEach(o=>{
+    if(groups[o.status]) groups[o.status].push(o);
+  });
+  ['pending','paid','cooking','ready'].forEach(s=>{
+    document.getElementById('c-'+s).textContent = groups[s].length;
+  });
+  const list = groups[curTab].sort((a,b)=>a.createdAt-b.createdAt);
+  const el = document.getElementById('list');
+  if(!list.length){
+    el.innerHTML = `<div class="empty">${tabEmpty(curTab)}</div>`;
+    return;
+  }
+  el.innerHTML = list.map(o=>card(o)).join('');
+}
+
+function tabEmpty(t){
+  return {pending:'대기 주문 없음',paid:'입금완료 주문 없음',cooking:'조리중 주문 없음',ready:'픽업 대기 없음'}[t]||'';
+}
+
+function card(o){
+  const time = new Date(o.createdAt);
+  const tStr = String(time.getHours()).padStart(2,'0')+':'+String(time.getMinutes()).padStart(2,'0');
+  const items = (o.items||[]).map(it=>{
+    const opt = (it.options||[]).map(op=>op.name).join(',');
+    return `<div>${it.emoji||''} ${it.name}${opt?' <span style="color:var(--acc);font-size:11px;">+'+opt+'</span>':''} <b>×${it.qty}</b></div>`;
+  }).join('');
+  const note = o.note ? `<div class="note">📝 ${o.note}</div>` : '';
+  const customer = o.customerName ? ` · ${o.customerName}` : '';
+  const phone = o.phone ? ` · ${o.phone}` : '';
+  let extra='';
+  if(o.amountMismatch){
+    extra += `<div class="mismatch">⚠️ 금액 불일치 — 기대 ${(o.total||0).toLocaleString()} / 실제 ${(o.paidAmount||0).toLocaleString()}원${o.payerName?' · '+o.payerName:''}</div>`;
+  }
+  if(o.refundRequested && !o.refundRejected){
+    extra += `<div class="refund">💸 환불요청${o.refundReason?' — '+o.refundReason:''}${o.refundAccount?' / '+o.refundAccount:''}</div>`;
+  }
+  let btns='';
+  if(o.status==='pending'){
+    btns = `
+      <button class="btn btn-confirm" onclick="act('${o.id}','confirm')">${o.amountMismatch?'강제확인':'입금확인'}</button>
+      <button class="btn btn-cancel" onclick="actConfirm('${o.id}','cancel','주문 취소할까요?')">취소</button>`;
+  }else if(o.status==='paid'){
+    btns = `
+      <button class="btn btn-start" onclick="act('${o.id}','start')">조리시작</button>
+      <button class="btn btn-undo" onclick="act('${o.id}','undo')">↩️</button>
+      <button class="btn btn-cancel" onclick="actConfirm('${o.id}','cancel','취소할까요?')">취소</button>`;
+  }else if(o.status==='cooking'){
+    btns = `
+      <button class="btn btn-ready" onclick="act('${o.id}','ready')">조리완료/호출</button>
+      <button class="btn btn-undo" onclick="act('${o.id}','undo')">↩️</button>`;
+  }else if(o.status==='ready'){
+    btns = `
+      <button class="btn btn-done" onclick="act('${o.id}','done')">수령완료</button>
+      <button class="btn btn-undo" onclick="act('${o.id}','undo')">↩️</button>`;
+  }
+  return `<div class="card ${o.status}">
+    <div class="row">
+      <div class="pickup">${o.pickup}</div>
+      <div style="text-align:right;">
+        <div class="amt">${(o.total||0).toLocaleString()}원</div>
+        <div class="time">${tStr}${customer}${phone}</div>
+      </div>
+    </div>
+    <div class="items">${items}</div>
+    ${note}
+    ${extra}
+    <div class="btns">${btns}</div>
+  </div>`;
+}
+
+async function act(orderId, action){
+  const o = allOrders[orderId];
+  if(!o) return;
+  const upd = {};
+  const now = Date.now();
+  if(action==='confirm'){
+    if(o.status!=='pending') return;
+    upd.status='paid'; upd.paidAt=now; upd.amountMismatch=false;
+  }else if(action==='start'){
+    if(o.status!=='paid') return;
+    upd.status='cooking'; upd.cookStartAt=now;
+  }else if(action==='ready'){
+    if(o.status!=='cooking') return;
+    upd.status='ready'; upd.readyAt=now;
+  }else if(action==='done'){
+    upd.status='done';
+  }else if(action==='cancel'){
+    upd.status='canceled';
+  }else if(action==='undo'){
+    if(o.status==='ready'){ upd.status='cooking'; upd.readyAt=null; }
+    else if(o.status==='cooking'){ upd.status='paid'; upd.cookStartAt=null; }
+    else if(o.status==='paid'){ upd.status='pending'; upd.paidAt=null; }
+    else return;
+  }else return;
+  try{
+    await fbDb.ref('/foodtruck/orders/'+orderId).update(upd);
+  }catch(e){ alert('실패: '+e.message); }
+}
+
+function actConfirm(id, action, msg){
+  if(confirm(msg)) act(id, action);
+}
+
+// ── 알림음 ───────────────────────────────
+function beep(times){
+  try{
+    if(!audioCtx) audioCtx = new(window.AudioContext||window.webkitAudioContext)();
+    const t = times||1;
+    for(let i=0;i<t;i++){
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination);
+      o.frequency.value = 880 + i*200;
+      g.gain.value = .15;
+      const start = audioCtx.currentTime + i*0.3;
+      o.start(start); o.stop(start + 0.18);
+    }
+  }catch(e){}
+}
+function vibrate(){
+  try{ if(navigator.vibrate) navigator.vibrate([200,80,200]); }catch(e){}
+}
+
+// 저장된 PIN 자동 통과 시도
+(async function(){
+  const saved = localStorage.getItem(PIN_KEY);
+  if(!saved) return;
+  try{
+    const snap = await fbDb.ref('/foodtruck/meta/staffPin').once('value');
+    const pin = snap.val() || '0000';
+    if(String(saved) === String(pin)){
+      document.getElementById('gate').style.display='none';
+      init();
+    }
+  }catch(e){}
+})();
+
+// 페이지 깨우기 (모바일 화면 꺼짐 방지 — 가능한 한)
+if('wakeLock' in navigator){
+  document.addEventListener('click', ()=>{
+    navigator.wakeLock.request('screen').catch(()=>{});
+  }, {once:true});
+}
+</script>
+</body>
+</html>

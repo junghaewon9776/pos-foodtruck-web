@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>푸드트럭 호출 디스플레이</title>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="transport-cloud.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{width:100%;height:100%;background:#0a0a14;color:#fff;font-family:'맑은 고딕','Malgun Gothic',sans-serif;overflow:hidden;}
+body{display:flex;flex-direction:column;}
+header{background:linear-gradient(90deg,#d08010,#e09020);padding:20px 40px;display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #ffb84d;}
+header h1{font-size:42px;font-weight:900;}
+header .clock{font-size:32px;font-weight:700;font-variant-numeric:tabular-nums;}
+main{flex:1;display:grid;grid-template-columns:1.6fr 1fr;gap:0;min-height:0;}
+.panel{padding:30px 40px;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+.panel.ready{background:#0a1f0a;border-right:2px solid #1a3a1a;}
+.panel.cooking{background:#0a1228;}
+.panel h2{font-size:36px;font-weight:900;margin-bottom:20px;display:flex;align-items:center;gap:14px;}
+.panel.ready h2{color:#7fff7f;}
+.panel.cooking h2{color:#7fc8ff;}
+.count{font-size:22px;background:rgba(255,255,255,.1);padding:4px 14px;border-radius:20px;}
+.grid-ready{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px;align-content:start;overflow-y:auto;}
+.card-ready{background:linear-gradient(135deg,#20a040,#40c060);border-radius:20px;padding:30px 10px;text-align:center;font-size:96px;font-weight:900;color:#fff;text-shadow:0 4px 12px rgba(0,0,0,.4);box-shadow:0 8px 24px rgba(64,192,96,.4);animation:pulse 1.4s ease-in-out infinite;}
+@keyframes pulse{0%,100%{transform:scale(1);box-shadow:0 8px 24px rgba(64,192,96,.4);}50%{transform:scale(1.04);box-shadow:0 12px 36px rgba(64,192,96,.7);}}
+.list-cooking{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px;align-content:start;overflow-y:auto;}
+.chip{background:rgba(127,200,255,.15);border:2px solid rgba(127,200,255,.4);border-radius:14px;padding:18px 6px;text-align:center;font-size:42px;font-weight:800;color:#cfe6ff;}
+.empty{color:#666;font-size:24px;text-align:center;padding:60px 0;grid-column:1/-1;}
+footer{background:#000;padding:14px 40px;display:flex;justify-content:space-between;font-size:20px;color:#888;border-top:1px solid #222;}
+footer .waiting{color:#ffb84d;font-weight:700;}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="sname">🍔 푸드트럭</h1>
+  <div class="clock" id="clock">--:--</div>
+</header>
+<main>
+  <section class="panel ready">
+    <h2>📢 픽업하세요 <span class="count" id="cnt-ready">0</span></h2>
+    <div class="grid-ready" id="list-ready"><div class="empty">호출 대기 중인 주문이 없습니다</div></div>
+  </section>
+  <section class="panel cooking">
+    <h2>🍳 조리중 <span class="count" id="cnt-cooking">0</span></h2>
+    <div class="list-cooking" id="list-cooking"><div class="empty">없음</div></div>
+  </section>
+</main>
+<footer>
+  <div>주문 후 픽업번호를 확인해 주세요</div>
+  <div class="waiting">대기 <span id="cnt-waiting">0</span>팀</div>
+</footer>
+<script>
+let lastReady=new Set();
+let audioCtx=null;
+function ding(){
+  try{
+    if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.connect(g);g.connect(audioCtx.destination);
+    o.type='sine';o.frequency.value=880;g.gain.value=.3;
+    o.start();
+    setTimeout(()=>{o.frequency.value=1320;},150);
+    setTimeout(()=>{o.frequency.value=1760;},300);
+    setTimeout(()=>{o.stop();},700);
+    if(window.speechSynthesis){
+      // 호출 음성은 새 호출만 따로 처리
+    }
+  }catch(e){}
+}
+function speak(pickup){
+  try{
+    if(!window.speechSynthesis)return;
+    const num=pickup.replace(/^[A-Za-z]+/,'').replace(/^0+/,'')||pickup;
+    const u=new SpeechSynthesisUtterance(num+'번 손님 픽업해주세요');
+    u.lang='ko-KR';u.rate=1;u.pitch=1;
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+function tickClock(){
+  const d=new Date();
+  document.getElementById('clock').textContent=
+    String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
+}
+setInterval(tickClock,1000);tickClock();
+
+let firstLoad=true;
+function render(d){
+  if(d.sname)document.getElementById('sname').textContent='🍔 '+d.sname;
+  const ready=d.ready||[];
+  document.getElementById('cnt-ready').textContent=ready.length;
+  const elR=document.getElementById('list-ready');
+  if(ready.length){
+    elR.innerHTML=ready.map(p=>`<div class="card-ready">${p}</div>`).join('');
+  }else{
+    elR.innerHTML='<div class="empty">호출 대기 중인 주문이 없습니다</div>';
+  }
+  if(!firstLoad){
+    ready.forEach(p=>{
+      if(!lastReady.has(p)){
+        ding();
+        setTimeout(()=>speak(p),400);
+      }
+    });
+  }
+  lastReady=new Set(ready);
+  const cooking=d.cooking||[];
+  document.getElementById('cnt-cooking').textContent=cooking.length;
+  const elC=document.getElementById('list-cooking');
+  elC.innerHTML=cooking.length?cooking.map(p=>`<div class="chip">${p}</div>`).join(''):'<div class="empty">없음</div>';
+  document.getElementById('cnt-waiting').textContent=(d.waiting||[]).length+cooking.length;
+  firstLoad=false;
+}
+
+// Firebase RTDB 실시간 구독 — Netlify 환경에서 동작
+function startCloudSubscribe(){
+  if(typeof FT==='undefined')return false;
+  FT.menu().on('value',snap=>{
+    const v=snap.val()||{};
+    if(v.sname)document.getElementById('sname').textContent='🍔 '+v.sname;
+  });
+  FT.orders().on('value',snap=>{
+    const v=snap.val()||{};
+    const today=new Date().toDateString();
+    const orders=Object.values(v).filter(o=>o&&o.createdAt&&new Date(o.createdAt).toDateString()===today);
+    render({
+      ok:true,
+      sname:document.getElementById('sname').textContent.replace(/^🍔\s*/,''),
+      waiting:orders.filter(o=>o.status==='pending'||o.status==='paid').map(o=>o.pickup),
+      cooking:orders.filter(o=>o.status==='cooking').map(o=>o.pickup),
+      ready:orders.filter(o=>o.status==='ready').map(o=>o.pickup),
+    });
+  });
+  return true;
+}
+
+// 로컬 모드 폴링 폴백 — Electron 내 로컬 HTTP 서버에서 띄울 때 사용
+async function loadLocal(){
+  try{
+    const r=await fetch('/api/ft/display');
+    if(!r.ok)return;
+    const d=await r.json();
+    if(!d.ok)return;
+    render(d);
+  }catch(e){}
+}
+
+if(typeof FT!=='undefined'){
+  startCloudSubscribe();
+}else{
+  loadLocal();
+  setInterval(loadLocal,2500);
+}
+// 첫 클릭으로 오디오 컨텍스트 활성화 (브라우저 정책)
+document.addEventListener('click',()=>{if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();},{once:true});
+</script>
+</body>
+</html>
