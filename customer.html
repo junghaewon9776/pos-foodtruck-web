@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>메뉴 주문</title>
 <!-- Firebase SDK (compat) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -277,8 +280,9 @@ async function init() {
     await ftCheckPresence();
   }
 
-  // 푸드트럭 모드면 활성 카테고리만 표시 (사장님이 설정에서 체크한 것)
-  if(menuData.foodtruckMode && Array.isArray(menuData.foodtruckActiveCats) && menuData.foodtruckActiveCats.length){
+  // 활성 카테고리만 표시 (사장님이 메뉴판으로 선택한 카테고리)
+  // 푸드트럭 모드 ON/OFF 무관 — 메뉴판이 선택돼있으면 그것만 보임
+  if(Array.isArray(menuData.foodtruckActiveCats) && menuData.foodtruckActiveCats.length){
     const active = new Set(menuData.foodtruckActiveCats);
     menuData.cats = (menuData.cats||[]).filter(c => active.has(c));
     menuData.menus = (menuData.menus||[]).filter(m => active.has(m.cat));
@@ -321,8 +325,8 @@ async function init() {
         foodtruckActiveCats: v.foodtruckActiveCats || [],
         event: v.event || {},
       };
-      // 푸드트럭 모드 + 메뉴판 카테고리 필터
-      if (menuData.foodtruckMode && Array.isArray(menuData.foodtruckActiveCats) && menuData.foodtruckActiveCats.length) {
+      // 메뉴판 카테고리 필터 (선택된 게 있으면 무조건 적용)
+      if (Array.isArray(menuData.foodtruckActiveCats) && menuData.foodtruckActiveCats.length) {
         const active = new Set(menuData.foodtruckActiveCats);
         menuData.cats = menuData.cats.filter(c => active.has(c));
         menuData.menus = menuData.menus.filter(m => active.has(m.cat));
