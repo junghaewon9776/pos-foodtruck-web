@@ -314,12 +314,25 @@
       // /api/ft/roulette-result — 룰렛 결과 저장
       if (u.pathname === '/api/ft/roulette-result' && init && init.method === 'POST') {
         const body = JSON.parse(init.body || '{}');
-        // pickup → orderId 찾기
         const o = await _findOrderByPickup(body.pickup);
         if(!o) return _jsonResponse({ ok:false, msg:'주문 없음' });
         const orderId = _pickupCache[body.pickup];
         const r = await _saveRouletteResult(orderId, body.prize);
         return _jsonResponse(r);
+      }
+
+      // /api/ft/customer-done — 손님이 직접 수령완료 처리
+      if (u.pathname === '/api/ft/customer-done' && init && init.method === 'POST') {
+        const body = JSON.parse(init.body || '{}');
+        const o = await _findOrderByPickup(body.pickup);
+        if(!o) return _jsonResponse({ ok:false, msg:'주문 없음' });
+        const orderId = _pickupCache[body.pickup];
+        try{
+          await FT.order(orderId).update({ status:'done', customerDoneAt: Date.now() });
+          return _jsonResponse({ ok:true });
+        }catch(e){
+          return _jsonResponse({ ok:false, msg:e.message });
+        }
       }
 
       // /api/ft/display — 디스플레이용

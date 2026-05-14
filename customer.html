@@ -271,6 +271,18 @@ async function init() {
     return;
   }
 
+  // 영업 상태 체크 (클라우드 모드 + 푸드트럭 모드)
+  if (menuData.foodtruckMode && typeof fbDb !== 'undefined') {
+    await ftCheckPresence();
+  }
+
+  // 푸드트럭 모드면 활성 카테고리만 표시 (사장님이 설정에서 체크한 것)
+  if(menuData.foodtruckMode && Array.isArray(menuData.foodtruckActiveCats) && menuData.foodtruckActiveCats.length){
+    const active = new Set(menuData.foodtruckActiveCats);
+    menuData.cats = (menuData.cats||[]).filter(c => active.has(c));
+    menuData.menus = (menuData.menus||[]).filter(m => active.has(m.cat));
+  }
+
   // 서버 테이블 데이터에서 실제 이름 조회
   if(menuData.tables && tableNum){
     const tbl = menuData.tables.find(t => t.num === tableNum);
@@ -293,6 +305,55 @@ async function init() {
 
   // 진행 중인 주문 복구 — 폰 닫았다 다시 들어왔을 때 상태 화면으로
   await ftRestoreActiveOrder();
+}
+
+// 매장 영업 중인지 Firebase presence로 확인 — POS 꺼져있거나 QR 닫혀있으면 영업 종료 화면
+async function ftCheckPresence() {
+  try {
+    const snap = await fbDb.ref('/foodtruck/meta/presence').once('value');
+    const p = snap.val() || {};
+    const online = !!p.online;
+    const ordersOpen = !!p.ordersOpen;
+    // 1분 이내 hearbeat이면 살아있다고 판정 (onDisconnect 누락 대비)
+    const recent = p.lastSeen && (Date.now() - p.lastSeen) < 60 * 1000;
+    const alive = online && recent;
+
+    if (!alive || !ordersOpen) {
+      const reason = !alive
+        ? '매장 POS가 꺼져 있습니다'
+        : '주문 접수가 일시 중지되었습니다';
+      ftShowClosedScreen(reason);
+      // 실시간 감시 — 영업 재개되면 자동 새로고침
+      fbDb.ref('/foodtruck/meta/presence').on('value', s => {
+        const v = s.val() || {};
+        const re = v.lastSeen && (Date.now() - v.lastSeen) < 60 * 1000;
+        if (v.online && v.ordersOpen && re) {
+          location.reload();
+        }
+      });
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('presence check 실패:', e);
+    return true; // 실패 시 통과 (안전)
+  }
+}
+
+function ftShowClosedScreen(reason) {
+  document.body.innerHTML = `
+    <div style="position:fixed;inset:0;background:linear-gradient(135deg,#f8f6f3,#fff);display:flex;align-items:center;justify-content:center;padding:30px;font-family:'Noto Sans KR',sans-serif;">
+      <div style="background:#fff;border-radius:20px;padding:40px 30px;max-width:380px;width:100%;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.1);">
+        <div style="font-size:64px;margin-bottom:14px;">🚫</div>
+        <div style="font-size:22px;font-weight:900;color:#c00;margin-bottom:8px;">영업 종료</div>
+        <div style="font-size:14px;color:#666;margin-bottom:18px;line-height:1.6;">${reason}</div>
+        <div style="background:#f8f6f3;border-radius:10px;padding:14px;font-size:13px;color:#888;">
+          매장이 다시 열리면 자동으로 페이지가 새로고침됩니다
+        </div>
+        <button onclick="location.reload()" style="margin-top:18px;padding:12px 24px;background:#d08010;color:#fff;border:none;border-radius:10px;font-weight:800;cursor:pointer;">새로고침</button>
+      </div>
+    </div>
+  `;
 }
 
 async function ftRestoreActiveOrder(){
@@ -1114,7 +1175,7 @@ function ftRenderStatus(d) {
     icon.textContent = '📢';
     title.textContent = '픽업하세요!';
     sub.textContent = '음식이 준비됐습니다 — 트럭으로 와주세요';
-    extra.textContent = '';
+    extra.innerHTML = '<button onclick="ftMarkSelfDone()" style="margin-top:16px;padding:16px 28px;border:none;border-radius:12px;background:#20a040;color:#fff;font-size:18px;font-weight:900;cursor:pointer;box-shadow:0 4px 12px rgba(32,160,64,.3);">✅ 수령 완료</button><div style="font-size:11px;color:#888;margin-top:6px;">받으셨으면 눌러주세요 — 호출이 멈춥니다</div>';
   } else if (d.status === 'done') {
     icon.textContent = '✅';
     title.textContent = '수령 완료';
@@ -1131,6 +1192,27 @@ function ftRenderStatus(d) {
     try{ localStorage.removeItem('ft_active_order'); }catch(e){}
   }
   ftLastStatus = d.status;
+}
+
+async function ftMarkSelfDone(){
+  if(!ftCurPickup) return;
+  if(!confirm('수령 완료로 처리할까요?\n호출이 멈춥니다.')) return;
+  try{
+    const res = await fetch(API_BASE + '/api/ft/customer-done', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ pickup: ftCurPickup }),
+    });
+    const d = await res.json();
+    if(d.ok){
+      ctoast('✅ 수령 완료 처리됨');
+      // 상태 화면 갱신은 폴링이 처리
+    }else{
+      ctoast('실패: ' + (d.msg||''));
+    }
+  }catch(e){
+    ctoast('통신 오류');
+  }
 }
 
 async function ftRequestRefund() {
