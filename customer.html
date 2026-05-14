@@ -304,6 +304,43 @@ async function init() {
   renderMenu();
   loadHistory();
 
+  // 메뉴 실시간 구독 — POS에서 메뉴판 바꾸면 즉시 반영
+  if (typeof fbDb !== 'undefined' && typeof FT !== 'undefined') {
+    FT.menu().on('value', snap => {
+      const v = snap.val() || {};
+      const prevMenuLen = (menuData.menus || []).length;
+      const prevCatLen = (menuData.cats || []).length;
+      menuData = {
+        cats: v.cats || [],
+        menus: v.menus || [],
+        sname: v.sname || '',
+        tables: v.tables || [],
+        foodtruckMode: !!v.foodtruckMode,
+        pickupPrefix: v.pickupPrefix || 'A',
+        payInfo: v.payInfo || {},
+        foodtruckActiveCats: v.foodtruckActiveCats || [],
+        event: v.event || {},
+      };
+      // 푸드트럭 모드 + 메뉴판 카테고리 필터
+      if (menuData.foodtruckMode && Array.isArray(menuData.foodtruckActiveCats) && menuData.foodtruckActiveCats.length) {
+        const active = new Set(menuData.foodtruckActiveCats);
+        menuData.cats = menuData.cats.filter(c => active.has(c));
+        menuData.menus = menuData.menus.filter(m => active.has(m.cat));
+      }
+      // 메뉴/카테고리 다시 그리기
+      renderCats();
+      renderMenu();
+      // 매장명 갱신
+      document.getElementById('store-name').textContent = menuData.sname || '매장';
+      // 결제/장바구니 화면 떠있지 않을 때만 토스트 (방해 X)
+      const inPayOrStatus = document.getElementById('ft-pay-overlay').style.display === 'block'
+        || document.getElementById('ft-status-overlay').style.display === 'block';
+      if (!inPayOrStatus && (prevMenuLen || prevCatLen)) {
+        ctoast('메뉴가 업데이트되었습니다');
+      }
+    });
+  }
+
   // 진행 중인 주문 복구 — 폰 닫았다 다시 들어왔을 때 상태 화면으로
   await ftRestoreActiveOrder();
 }
