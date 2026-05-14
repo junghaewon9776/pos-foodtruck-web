@@ -1,0 +1,21 @@
+# POS Electron 빌드 산출물
+pos-app/node_modules/
+pos-app/dist/
+pos-app/backup/
+
+# 환경 / IDE
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# 임시 파일
+*.tmp
+~$*
+
+# 큰 바이너리 (Releases에 업로드)
+*.exe
+*.dmg
+*.zip
+!pos-app/qz-tray-*.exe

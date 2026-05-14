@@ -273,6 +273,7 @@ async function init() {
 
   // 영업 상태 체크 (클라우드 모드 + 푸드트럭 모드)
   if (menuData.foodtruckMode && typeof fbDb !== 'undefined') {
+    await ftCheckUrlKey();
     await ftCheckPresence();
   }
 
@@ -307,33 +308,92 @@ async function init() {
   await ftRestoreActiveOrder();
 }
 
-// 매장 영업 중인지 Firebase presence로 확인 — POS 꺼져있거나 QR 닫혀있으면 영업 종료 화면
+// 🔐 URL 보안 키 검증 — 만료된 QR이면 차단
+async function ftCheckUrlKey() {
+  try {
+    const snap = await fbDb.ref('/foodtruck/meta/urlKey').once('value');
+    const serverKey = snap.val();
+    if (!serverKey) return true; // 키 미설정이면 통과
+    const params = new URLSearchParams(location.search);
+    const urlKey = params.get('k');
+    if (String(urlKey) !== String(serverKey)) {
+      ftShowExpiredScreen();
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('urlKey check 실패:', e);
+    return true; // 실패 시 통과 (안전)
+  }
+}
+
+function ftShowExpiredScreen() {
+  document.body.innerHTML = `
+    <div style="position:fixed;inset:0;background:linear-gradient(135deg,#ffe8e0,#fff);display:flex;align-items:center;justify-content:center;padding:30px;font-family:'Noto Sans KR',sans-serif;">
+      <div style="background:#fff;border-radius:24px;padding:40px 28px;max-width:400px;width:100%;text-align:center;box-shadow:0 12px 48px rgba(200,0,0,.15);border:3px solid #c00;">
+        <div style="font-size:80px;margin-bottom:14px;">⚠️</div>
+        <div style="font-size:26px;font-weight:900;color:#c00;margin-bottom:14px;">QR이 달라요!</div>
+        <div style="background:#fff5e0;border:2px solid #d08010;border-radius:14px;padding:18px;margin-bottom:18px;">
+          <div style="font-size:18px;font-weight:900;color:#a05000;margin-bottom:8px;">📍 매장 앞에 가셔서</div>
+          <div style="font-size:20px;font-weight:900;color:#a05000;line-height:1.4;">새 QR을 다시 스캔해 주세요</div>
+        </div>
+        <div style="font-size:13px;color:#666;margin-bottom:14px;line-height:1.6;">
+          이 QR은 이전에 사용된 것이라<br>더 이상 주문에 사용할 수 없습니다.
+        </div>
+        <div style="background:#f8f6f3;border-radius:10px;padding:12px;font-size:11px;color:#999;line-height:1.5;">
+          매장에 부착된 최신 QR 코드를 스마트폰 카메라로 다시 찍어주세요.
+        </div>
+      </div>
+    </div>
+  `;
+  throw new Error('expired-qr');
+}
+
+// 매장 영업 상태 — 페이지 열려있는 동안 실시간 감시
+let _ftAlive = true;
+
+function _ftIsOpen(p) {
+  if (!p) return false;
+  const online = !!p.online;
+  const ordersOpen = !!p.ordersOpen;
+  // 90초 이내 heartbeat = 살아있음 (onDisconnect 누락 대비)
+  const recent = p.lastSeen && (Date.now() - p.lastSeen) < 90 * 1000;
+  return online && ordersOpen && recent;
+}
+
+// 영업 상태 즉시 1회 확인 + 실시간 감시 시작
 async function ftCheckPresence() {
   try {
     const snap = await fbDb.ref('/foodtruck/meta/presence').once('value');
     const p = snap.val() || {};
-    const online = !!p.online;
-    const ordersOpen = !!p.ordersOpen;
-    // 1분 이내 hearbeat이면 살아있다고 판정 (onDisconnect 누락 대비)
-    const recent = p.lastSeen && (Date.now() - p.lastSeen) < 60 * 1000;
-    const alive = online && recent;
+    _ftAlive = _ftIsOpen(p);
 
-    if (!alive || !ordersOpen) {
-      const reason = !alive
+    if (!_ftAlive) {
+      const reason = (!p.online || !p.lastSeen)
         ? '매장 POS가 꺼져 있습니다'
         : '주문 접수가 일시 중지되었습니다';
       ftShowClosedScreen(reason);
-      // 실시간 감시 — 영업 재개되면 자동 새로고침
-      fbDb.ref('/foodtruck/meta/presence').on('value', s => {
-        const v = s.val() || {};
-        const re = v.lastSeen && (Date.now() - v.lastSeen) < 60 * 1000;
-        if (v.online && v.ordersOpen && re) {
-          location.reload();
-        }
-      });
-      return false;
     }
-    return true;
+
+    // 실시간 감시 — 영업 상태 변경 즉시 반영
+    fbDb.ref('/foodtruck/meta/presence').on('value', s => {
+      const v = s.val() || {};
+      const wasAlive = _ftAlive;
+      _ftAlive = _ftIsOpen(v);
+
+      if (!wasAlive && _ftAlive) {
+        // 닫힘 → 열림: 새로고침해서 메뉴 다시 로드
+        location.reload();
+      } else if (wasAlive && !_ftAlive) {
+        // 열림 → 닫힘: 닫힘 화면 즉시 표시
+        const reason = (!v.online || !v.lastSeen)
+          ? '매장 POS가 꺼졌습니다'
+          : '주문 접수가 일시 중지되었습니다';
+        ftShowClosedScreen(reason);
+      }
+    });
+
+    return _ftAlive;
   } catch (e) {
     console.warn('presence check 실패:', e);
     return true; // 실패 시 통과 (안전)
@@ -778,6 +838,17 @@ let ftExpireAt = 0;
 
 async function ftSubmitOrder() {
   if (!cart.length) return;
+  // 영업 상태 재검증 — 페이지 열어두고 한참 후 주문할 때 대비
+  if (typeof fbDb !== 'undefined') {
+    try {
+      const snap = await fbDb.ref('/foodtruck/meta/presence').once('value');
+      const p = snap.val() || {};
+      if (!_ftIsOpen(p)) {
+        ftShowClosedScreen('영업이 종료되었습니다');
+        return;
+      }
+    } catch (e) {}
+  }
   const nameVal = ((document.getElementById('ft-name')||{}).value||'').trim();
   if (nameVal.length < 2) {
     alert('성함을 입력해주세요\n(입금자명과 같아야 자동확인됩니다)');
