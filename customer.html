@@ -280,12 +280,11 @@ async function init() {
     await ftCheckPresence();
   }
 
-  // 활성 카테고리만 표시 (사장님이 메뉴판으로 선택한 카테고리)
-  // 푸드트럭 모드 ON/OFF 무관 — 메뉴판이 선택돼있으면 그것만 보임
-  if(Array.isArray(menuData.foodtruckActiveCats) && menuData.foodtruckActiveCats.length){
-    const active = new Set(menuData.foodtruckActiveCats);
-    menuData.cats = (menuData.cats||[]).filter(c => active.has(c));
-    menuData.menus = (menuData.menus||[]).filter(m => active.has(m.cat));
+  // 활성 카테고리만 표시 — 메뉴판이 선택돼있으면 (빈 메뉴판이라도) 그것만 보임
+  if (menuData.foodtruckPresetName) {
+    const active = new Set(menuData.foodtruckActiveCats || []);
+    menuData.cats = (menuData.cats || []).filter(c => active.has(c));
+    menuData.menus = (menuData.menus || []).filter(m => active.has(m.cat));
   }
 
   // 서버 테이블 데이터에서 실제 이름 조회
@@ -323,11 +322,12 @@ async function init() {
         pickupPrefix: v.pickupPrefix || 'A',
         payInfo: v.payInfo || {},
         foodtruckActiveCats: v.foodtruckActiveCats || [],
+        foodtruckPresetName: v.foodtruckPresetName || '',
         event: v.event || {},
       };
-      // 메뉴판 카테고리 필터 (선택된 게 있으면 무조건 적용)
-      if (Array.isArray(menuData.foodtruckActiveCats) && menuData.foodtruckActiveCats.length) {
-        const active = new Set(menuData.foodtruckActiveCats);
+      // 메뉴판 선택돼있으면 (빈 메뉴판이라도) 그 카테고리만 표시
+      if (menuData.foodtruckPresetName) {
+        const active = new Set(menuData.foodtruckActiveCats || []);
         menuData.cats = menuData.cats.filter(c => active.has(c));
         menuData.menus = menuData.menus.filter(m => active.has(m.cat));
       }
