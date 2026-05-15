@@ -307,13 +307,13 @@ async function init() {
   renderMenu();
   loadHistory();
 
-  // 메뉴 실시간 구독 — POS에서 메뉴판 바꾸면 즉시 반영
+  // 메뉴 실시간 구독 — 손님이 고르는 중엔 적용 보류 (다음 진입/주문완료 시 반영)
+  window._pendingMenuUpdate = null;
   if (typeof fbDb !== 'undefined' && typeof FT !== 'undefined') {
+    let _firstMenuSnap = true;
     FT.menu().on('value', snap => {
       const v = snap.val() || {};
-      const prevMenuLen = (menuData.menus || []).length;
-      const prevCatLen = (menuData.cats || []).length;
-      menuData = {
+      const nextMenu = {
         cats: v.cats || [],
         menus: v.menus || [],
         sname: v.sname || '',
@@ -325,25 +325,40 @@ async function init() {
         foodtruckPresetName: v.foodtruckPresetName || '',
         event: v.event || {},
       };
-      // 메뉴판 선택돼있으면 (빈 메뉴판이라도) 그 카테고리만 표시
-      if (menuData.foodtruckPresetName) {
-        const active = new Set(menuData.foodtruckActiveCats || []);
-        menuData.cats = menuData.cats.filter(c => active.has(c));
-        menuData.menus = menuData.menus.filter(m => active.has(m.cat));
+      if (nextMenu.foodtruckPresetName) {
+        const active = new Set(nextMenu.foodtruckActiveCats || []);
+        nextMenu.cats = nextMenu.cats.filter(c => active.has(c));
+        nextMenu.menus = nextMenu.menus.filter(m => active.has(m.cat));
       }
-      // 메뉴/카테고리 다시 그리기
+      // 손님이 활동 중이면 (장바구니 채워졌거나 옵션/결제/상태 오버레이 떠있으면) 적용 보류
+      const busy = (cart && cart.length > 0)
+        || document.getElementById('ft-pay-overlay').style.display === 'block'
+        || document.getElementById('ft-status-overlay').style.display === 'block'
+        || (document.getElementById('opt-overlay') && document.getElementById('opt-overlay').style.display === 'block');
+      if (!_firstMenuSnap && busy) {
+        // 보류 — 장바구니 비워지면 그때 적용
+        window._pendingMenuUpdate = nextMenu;
+        return;
+      }
+      _firstMenuSnap = false;
+      menuData = nextMenu;
       renderCats();
       renderMenu();
-      // 매장명 갱신
       document.getElementById('store-name').textContent = menuData.sname || '매장';
-      // 결제/장바구니 화면 떠있지 않을 때만 토스트 (방해 X)
-      const inPayOrStatus = document.getElementById('ft-pay-overlay').style.display === 'block'
-        || document.getElementById('ft-status-overlay').style.display === 'block';
-      if (!inPayOrStatus && (prevMenuLen || prevCatLen)) {
-        ctoast('메뉴가 업데이트되었습니다');
-      }
+      window._pendingMenuUpdate = null;
     });
   }
+
+  // 장바구니 비워졌을 때 보류된 메뉴 업데이트 적용
+  window.applyPendingMenuUpdate = function() {
+    if (!window._pendingMenuUpdate) return;
+    if (cart && cart.length > 0) return;
+    menuData = window._pendingMenuUpdate;
+    window._pendingMenuUpdate = null;
+    renderCats();
+    renderMenu();
+    document.getElementById('store-name').textContent = menuData.sname || '매장';
+  };
 
   // 진행 중인 주문 복구 — 폰 닫았다 다시 들어왔을 때 상태 화면으로
   await ftRestoreActiveOrder();
@@ -416,21 +431,31 @@ async function ftCheckPresence() {
       ftShowClosedScreen(reason);
     }
 
-    // 실시간 감시 — 영업 상태 변경 즉시 반영
+    // 실시간 감시 — 영업 상태 변경 즉시 반영 (8초 디바운스로 깜빡임 방지)
+    let _closedDebounce = null;
     fbDb.ref('/foodtruck/meta/presence').on('value', s => {
       const v = s.val() || {};
       const wasAlive = _ftAlive;
       _ftAlive = _ftIsOpen(v);
 
       if (!wasAlive && _ftAlive) {
-        // 닫힘 → 열림: 새로고침해서 메뉴 다시 로드
+        // 닫힘 → 열림: 디바운스 취소 + 새로고침
+        if (_closedDebounce) { clearTimeout(_closedDebounce); _closedDebounce = null; }
         location.reload();
       } else if (wasAlive && !_ftAlive) {
-        // 열림 → 닫힘: 닫힘 화면 즉시 표시
-        const reason = (!v.online || !v.lastSeen)
-          ? '매장 POS가 꺼졌습니다'
-          : '주문 접수가 일시 중지되었습니다';
-        ftShowClosedScreen(reason);
+        // 열림 → 닫힘: 8초 후 재확인, 그래도 닫힘이면 표시 (잠깐 끊긴 경우 무시)
+        if (_closedDebounce) clearTimeout(_closedDebounce);
+        _closedDebounce = setTimeout(async () => {
+          try {
+            const fresh = await fbDb.ref('/foodtruck/meta/presence').once('value');
+            const fv = fresh.val() || {};
+            if (_ftIsOpen(fv)) { _ftAlive = true; return; }
+          } catch (e) {}
+          const reason = (!v.online || !v.lastSeen)
+            ? '매장 POS가 꺼졌습니다'
+            : '주문 접수가 일시 중지되었습니다';
+          ftShowClosedScreen(reason);
+        }, 8000);
       }
     });
 
@@ -1364,6 +1389,8 @@ function ftBackToMenu() {
   document.getElementById('ft-status-overlay').style.display = 'none';
   ftCurPickup = null; ftLastStatus = '';
   if (ftStatusInt) { clearInterval(ftStatusInt); ftStatusInt = null; }
+  // 보류돼있던 메뉴 업데이트 이때 반영 (새 주문 시작 직전)
+  if (typeof window.applyPendingMenuUpdate === 'function') window.applyPendingMenuUpdate();
 }
 
 // 시작
