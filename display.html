@@ -11,6 +11,7 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{width:100%;height:100%;background:#0a0a14;color:#fff;font-family:'맑은 고딕','Malgun Gothic',sans-serif;overflow:hidden;}
+header,footer,main,.panel{overflow-x:hidden;max-width:100%;}
 body{display:flex;flex-direction:column;}
 header{background:linear-gradient(90deg,#d08010,#e09020);padding:20px 40px;display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #ffb84d;gap:14px;min-width:0;}
 header h1{font-size:42px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;}
@@ -25,7 +26,8 @@ main{flex:1;display:grid;grid-template-columns:2fr 1fr;gap:0;min-height:0;}
 .panel.cooking h2{color:#7fc8ff;}
 .count{font-size:22px;background:rgba(255,255,255,.1);padding:4px 14px;border-radius:20px;}
 .grid-ready{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-content:start;overflow-y:scroll;}
-.card-ready{background:linear-gradient(135deg,#20a040,#40c060);border-radius:20px;padding:22px 6px;text-align:center;font-size:clamp(32px,4.5vw,72px);font-weight:900;color:#fff;text-shadow:0 4px 12px rgba(0,0,0,.4);box-shadow:0 6px 18px rgba(64,192,96,.35);animation:pulse 1.4s ease-in-out infinite;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;line-height:1.05;display:flex;align-items:center;justify-content:center;min-height:90px;}
+.card-ready{background:linear-gradient(135deg,#20a040,#40c060);border-radius:20px;padding:22px 6px;text-align:center;font-size:clamp(32px,4.5vw,72px);font-weight:900;color:#fff;text-shadow:0 4px 12px rgba(0,0,0,.4);box-shadow:0 6px 18px rgba(64,192,96,.35);animation:pulse 1.4s ease-in-out infinite;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;line-height:1.05;display:flex;align-items:center;justify-content:center;min-height:90px;cursor:pointer;transition:transform .15s,box-shadow .15s;}
+.card-ready:hover{transform:scale(1.04);box-shadow:0 10px 24px rgba(64,192,96,.6);}
 @keyframes pulse{0%,100%{transform:scale(1);box-shadow:0 8px 24px rgba(64,192,96,.4);}50%{transform:scale(1.03);box-shadow:0 12px 36px rgba(64,192,96,.7);}}
 .list-cooking{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px;align-content:start;overflow-y:scroll;}
 .chip{background:rgba(127,200,255,.15);border:2px solid rgba(127,200,255,.4);border-radius:14px;padding:18px 6px;text-align:center;font-size:clamp(28px,4vw,42px);font-weight:800;color:#cfe6ff;overflow:hidden;word-break:break-all;line-height:1.1;}
@@ -80,6 +82,21 @@ function speak(pickup){
     speechSynthesis.speak(u);
   }catch(e){}
 }
+// 카드 클릭 → 다시 호출 (벨 + TTS + 카드 깜빡임)
+function recall(pickup){
+  ding();
+  speak(pickup);
+  try{
+    const cards = document.querySelectorAll('.card-ready');
+    cards.forEach(c => {
+      if(c.textContent.trim() === pickup){
+        c.style.transform='scale(1.1)';
+        c.style.boxShadow='0 12px 36px rgba(255,200,80,.9)';
+        setTimeout(()=>{ c.style.transform=''; c.style.boxShadow=''; }, 600);
+      }
+    });
+  }catch(e){}
+}
 function tickClock(){
   const d=new Date();
   document.getElementById('clock').textContent=
@@ -113,7 +130,7 @@ function render(d){
   document.getElementById('cnt-ready').textContent=ready.length;
   const elR=document.getElementById('list-ready');
   if(ready.length){
-    elR.innerHTML=ready.map(p=>`<div class="card-ready">${p}</div>`).join('');
+    elR.innerHTML=ready.map(p=>`<div class="card-ready" onclick="recall('${p}')" title="클릭하면 다시 호출">${p}</div>`).join('');
   }else{
     elR.innerHTML='<div class="empty">호출 대기 중인 주문이 없습니다</div>';
   }
