@@ -15,17 +15,17 @@ body{display:flex;flex-direction:column;}
 header{background:linear-gradient(90deg,#d08010,#e09020);padding:20px 40px;display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #ffb84d;}
 header h1{font-size:42px;font-weight:900;}
 header .clock{font-size:32px;font-weight:700;font-variant-numeric:tabular-nums;}
-main{flex:1;display:grid;grid-template-columns:1.6fr 1fr;gap:0;min-height:0;}
+main{flex:1;display:grid;grid-template-columns:2fr 1fr;gap:0;min-height:0;}
 .panel{padding:30px 40px;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
 .panel.ready{background:#0a1f0a;border-right:2px solid #1a3a1a;}
 .panel.cooking{background:#0a1228;}
-.panel h2{font-size:clamp(16px,2.4vw,32px);font-weight:900;margin-bottom:20px;display:flex;align-items:center;gap:8px;white-space:nowrap;overflow:hidden;}
-.panel h2 .count{flex-shrink:0;}
+.panel h2{font-size:clamp(20px,2.4vw,36px);font-weight:900;margin-bottom:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;}
+.panel h2 .count{display:inline-block;font-size:0.65em;background:rgba(255,255,255,.1);padding:2px 12px;border-radius:14px;margin-left:8px;vertical-align:middle;}
 .panel.ready h2{color:#7fff7f;}
 .panel.cooking h2{color:#7fc8ff;}
 .count{font-size:22px;background:rgba(255,255,255,.1);padding:4px 14px;border-radius:20px;}
-.grid-ready{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px;align-content:start;overflow-y:auto;}
-.card-ready{background:linear-gradient(135deg,#20a040,#40c060);border-radius:20px;padding:24px 8px;text-align:center;font-size:clamp(48px,7vw,96px);font-weight:900;color:#fff;text-shadow:0 4px 12px rgba(0,0,0,.4);box-shadow:0 8px 24px rgba(64,192,96,.4);animation:pulse 1.4s ease-in-out infinite;overflow:hidden;word-break:break-all;line-height:1.1;}
+.grid-ready{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:24px;align-content:start;overflow-y:auto;}
+.card-ready{background:linear-gradient(135deg,#20a040,#40c060);border-radius:24px;padding:36px 10px;text-align:center;font-size:clamp(60px,8.5vw,120px);font-weight:900;color:#fff;text-shadow:0 4px 12px rgba(0,0,0,.4);box-shadow:0 8px 24px rgba(64,192,96,.4);animation:pulse 1.4s ease-in-out infinite;overflow:hidden;word-break:break-all;line-height:1.05;}
 @keyframes pulse{0%,100%{transform:scale(1);box-shadow:0 8px 24px rgba(64,192,96,.4);}50%{transform:scale(1.03);box-shadow:0 12px 36px rgba(64,192,96,.7);}}
 .list-cooking{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px;align-content:start;overflow-y:auto;}
 .chip{background:rgba(127,200,255,.15);border:2px solid rgba(127,200,255,.4);border-radius:14px;padding:18px 6px;text-align:center;font-size:clamp(28px,4vw,42px);font-weight:800;color:#cfe6ff;overflow:hidden;word-break:break-all;line-height:1.1;}
@@ -41,7 +41,7 @@ footer .waiting{color:#ffb84d;font-weight:700;}
 </header>
 <main>
   <section class="panel ready">
-    <h2>📢 픽업 <span class="count" id="cnt-ready">0</span></h2>
+    <h2>📢 픽업하세요 <span class="count" id="cnt-ready">0</span></h2>
     <div class="grid-ready" id="list-ready"><div class="empty">호출 대기 중인 주문이 없습니다</div></div>
   </section>
   <section class="panel cooking">
@@ -86,6 +86,26 @@ function tickClock(){
     String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
 }
 setInterval(tickClock,1000);tickClock();
+
+// 헤더/제목 자동 축소 — 어떤 해상도/비율에서도 한 줄에 들어가도록
+function fitOneLine(el, maxPx, minPx){
+  if(!el) return;
+  let size = maxPx;
+  el.style.fontSize = size + 'px';
+  let guard = 0;
+  while(el.scrollWidth > el.clientWidth && size > minPx && guard < 60){
+    size -= 1;
+    el.style.fontSize = size + 'px';
+    guard++;
+  }
+}
+function fitAllHeadings(){
+  document.querySelectorAll('header h1').forEach(el => fitOneLine(el, 42, 14));
+  document.querySelectorAll('.panel h2').forEach(el => fitOneLine(el, 36, 14));
+}
+window.addEventListener('resize', fitAllHeadings);
+setTimeout(fitAllHeadings, 50);
+setInterval(fitAllHeadings, 2000);
 
 let firstLoad=true;
 function render(d){
