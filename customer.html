@@ -1058,29 +1058,39 @@ function ftStartStatusPolling() {
 // 🎰 룰렛 — N번째 손님 행운 룰렛
 function ftShowRoulette(pickup, pool){
   if(!pool || !pool.length) return;
-  // 슬롯: 메뉴 풀 + "꽝" 1~2개
+  // POS에서 보낸 가중치/슬롯수 적용
+  const weights = (menuData && menuData.event && menuData.event.rouletteWeights) || {};
+  const slotCount = Math.max(3, Math.min(12, (menuData && menuData.event && menuData.event.rouletteSlotCount) || 6));
+  const weightedPool = pool.map(p => Object.assign({}, p, { weight: (weights[p.id] != null) ? weights[p.id] : 1 }));
+  const includeLose = weightedPool.length >= 2;
+  const winSlotCount = Math.max(1, slotCount - (includeLose ? 1 : 0));
+  let active = weightedPool.filter(p => (p.weight || 0) > 0);
+  if(!active.length) active = weightedPool.map(p => Object.assign({}, p, { weight: 1 }));
+  const totalW = active.reduce((s,p)=>s+p.weight,0);
+  const allocs = active.map(p => { const raw=(p.weight/totalW)*winSlotCount; return { p, count: Math.floor(raw), frac: raw - Math.floor(raw) }; });
+  let assigned = allocs.reduce((s,a)=>s+a.count,0);
+  const byFrac = allocs.slice().sort((a,b)=>b.frac-a.frac);
+  let idx=0;
+  while(assigned < winSlotCount){ byFrac[idx % byFrac.length].count++; assigned++; idx++; }
   const slots = [];
-  pool.forEach(p => slots.push({ kind:'win', ...p }));
-  // 꽝 1개 추가 (긴장감용)
-  if(pool.length >= 2) slots.push({ kind:'lose', name:'꽝', emoji:'😿' });
-  // 슬롯 수가 너무 적으면 메뉴 중복 추가해서 6개 정도
-  while(slots.length < 6){
-    const dup = pool[Math.floor(Math.random()*pool.length)];
-    slots.push({ kind:'win', ...dup });
-  }
-  // 셔플
+  allocs.forEach(a => { for(let i=0;i<a.count;i++) slots.push({ kind:'win', id:a.p.id, name:a.p.name, emoji:a.p.emoji||'', price:a.p.price||0 }); });
+  while(slots.length < winSlotCount){ const d = active[Math.floor(Math.random()*active.length)]; slots.push({ kind:'win', id:d.id, name:d.name, emoji:d.emoji||'', price:d.price||0 }); }
+  if(includeLose) slots.push({ kind:'lose', name:'꽝', emoji:'😿' });
   slots.sort(()=>Math.random()-0.5);
 
   const sliceAngle = 360 / slots.length;
   const palette = ['#d08010','#208040','#0066cc','#a060c0','#c04060','#d0a020','#40a0a0','#806040'];
 
-  const slicesHtml = slots.map((s,i)=>{
-    const angle = sliceAngle * i;
-    const color = palette[i % palette.length];
+  // conic-gradient 배경 + 절대위치 라벨
+  const gradientStops = slots.map((s,i)=>{
+    const start = sliceAngle*i, end = sliceAngle*(i+1);
+    const color = s.kind==='lose' ? '#666' : palette[i % palette.length];
+    return `${color} ${start}deg ${end}deg`;
+  }).join(', ');
+  const labelsHtml = slots.map((s,i)=>{
+    const centerAngle = sliceAngle*i + sliceAngle/2;
     const label = (s.emoji||'') + (s.kind==='lose' ? '꽝' : (s.name.length>5 ? s.name.slice(0,4)+'…' : s.name));
-    return `<div class="rou-slice" style="transform:rotate(${angle}deg);background:${color};">
-      <span style="transform:rotate(${sliceAngle/2}deg);">${label}</span>
-    </div>`;
+    return `<div class="rou-label" style="transform:translate(-50%,-50%) rotate(${centerAngle}deg) translateY(-95px) rotate(${centerAngle>90 && centerAngle<270 ? 180 : 0}deg);">${label}</div>`;
   }).join('');
 
   const html = `<div id="ft-rou-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;">
@@ -1089,8 +1099,8 @@ function ftShowRoulette(pickup, pool){
       <div style="font-size:12px;color:#666;margin-bottom:18px;">${pickup}번 손님 — 매장 N번째 주문 행운!</div>
       <div style="position:relative;width:280px;height:280px;margin:0 auto;">
         <div style="position:absolute;top:-8px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:14px solid transparent;border-right:14px solid transparent;border-top:24px solid #c00;z-index:10;"></div>
-        <div id="rou-wheel" style="position:relative;width:100%;height:100%;border-radius:50%;overflow:hidden;border:6px solid #d08010;box-shadow:0 8px 24px rgba(0,0,0,.3);transition:transform 4s cubic-bezier(.17,.67,.13,1.01);">
-          ${slicesHtml}
+        <div id="rou-wheel" style="position:relative;width:100%;height:100%;border-radius:50%;overflow:hidden;border:6px solid #d08010;box-shadow:0 8px 24px rgba(0,0,0,.3);transition:transform 4s cubic-bezier(.17,.67,.13,1.01);background:conic-gradient(from 0deg, ${gradientStops});">
+          ${labelsHtml}
         </div>
       </div>
       <button id="rou-spin-btn" style="margin-top:20px;width:100%;padding:16px;background:linear-gradient(90deg,#d08010,#e09020);color:#fff;border:none;border-radius:12px;font-size:18px;font-weight:900;cursor:pointer;box-shadow:0 4px 12px rgba(208,128,16,.4);">돌리기 🎰</button>
@@ -1098,8 +1108,7 @@ function ftShowRoulette(pickup, pool){
     </div>
   </div>
   <style>
-    .rou-slice{position:absolute;top:0;left:50%;width:50%;height:50%;transform-origin:0% 100%;clip-path:polygon(0 0,100% 0,100% 100%);display:flex;align-items:flex-start;justify-content:center;padding-top:14px;}
-    .rou-slice span{display:inline-block;font-size:12px;font-weight:800;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4);max-width:60px;text-align:center;line-height:1.1;}
+    .rou-label{position:absolute;top:50%;left:50%;font-size:12px;font-weight:800;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.5);white-space:nowrap;pointer-events:none;}
   </style>`;
   const old = document.getElementById('ft-rou-overlay');
   if(old) old.remove();
@@ -1111,10 +1120,12 @@ function ftShowRoulette(pickup, pool){
     spun = true;
     const btn = document.getElementById('rou-spin-btn');
     btn.disabled = true; btn.textContent = '돌리는 중...';
-    // 랜덤 슬롯 선택 (당첨률 80%로 살짝 유리하게)
+    // 랜덤 슬롯 선택 — POS에서 설정한 당첨 확률 사용 (기본 85%)
     const winSlots = slots.map((s,i)=>({s,i})).filter(x=>x.s.kind==='win');
     const loseSlots = slots.map((s,i)=>({s,i})).filter(x=>x.s.kind==='lose');
-    const pickWin = Math.random() < 0.85 || !loseSlots.length;
+    const probPct = (menuData && menuData.event && menuData.event.rouletteProbability != null) ? menuData.event.rouletteProbability : 85;
+    const winThreshold = Math.max(0, Math.min(100, probPct)) / 100;
+    const pickWin = Math.random() < winThreshold || !loseSlots.length;
     const target = (pickWin ? winSlots : loseSlots)[Math.floor(Math.random()*(pickWin?winSlots.length:loseSlots.length))];
     const targetIdx = target.i;
     // 룰렛 회전 각도 — 화살표가 슬롯 중앙에 멈추도록
