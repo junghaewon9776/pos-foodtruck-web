@@ -73,19 +73,61 @@ function ding(){
     }
   }catch(e){}
 }
+// 음성 프리셋 — 각 매장 취향대로
+const VOICE_PRESETS = {
+  basic:     { label:'🎤 기본',     text: n => n+'번 손님 픽업해주세요',                     rate:1.0,  pitch:1.0 },
+  kind:      { label:'😊 친절',     text: n => n+'번 손님, 픽업 부탁드려요!',                rate:1.15, pitch:1.5 },
+  bright:    { label:'✨ 청량',     text: n => n+'번 손님~ 픽업이요!',                       rate:1.2,  pitch:1.7 },
+  excited:   { label:'🎉 신남',     text: n => '와! '+n+'번 손님 픽업이요~',                 rate:1.25, pitch:1.8 },
+  calm:      { label:'🌙 차분',     text: n => n+'번 손님 픽업하세요',                       rate:0.95, pitch:0.95 },
+  energetic: { label:'⚡ 활기',     text: n => n+'번 손님 픽업 도착이요!',                   rate:1.3,  pitch:1.4 },
+  greeting:  { label:'👋 인사',     text: n => '안녕하세요! '+n+'번 손님 픽업이에요~',       rate:1.15, pitch:1.4 },
+  sweet:     { label:'🍰 달콤',     text: n => n+'번 손님 픽업이요, 맛있게 드세요!',         rate:1.1,  pitch:1.6 },
+  polite:    { label:'💝 깍듯',     text: n => n+'번 고객님, 음식 나왔습니다',                rate:1.0,  pitch:1.0 },
+  clear:     { label:'🤖 또렷',     text: n => '픽업번호 '+n+'번 손님',                      rate:0.9,  pitch:1.0 },
+  truck:     { label:'🍔 푸드트럭', text: n => n+'번이요! 픽업 부탁드립니다!',              rate:1.2,  pitch:1.3 },
+  cute:      { label:'🐰 깜찍',     text: n => n+'번 손님 픽업이에요~',                      rate:1.15, pitch:1.9 },
+  fast:      { label:'🏃 빠르게',   text: n => n+'번 픽업이요!',                             rate:1.4,  pitch:1.5 },
+  song:      { label:'🎵 노래',     text: n => n+'번 손님~ 픽업이요~ 픽업 부탁드려요~',     rate:1.05, pitch:1.7 },
+  warm:      { label:'☕ 따뜻',     text: n => n+'번 손님 픽업 도와드릴게요',                rate:0.95, pitch:1.2 },
+  cheer:     { label:'🥳 응원',     text: n => '짜잔! '+n+'번 손님 픽업이에요!',             rate:1.2,  pitch:1.8 },
+};
+// POS에서 푸시한 프리셋 우선 사용, 없으면 'kind' 기본값
+let _pushedVoicePreset = null;
+function getCurrentVoicePreset(){
+  return _pushedVoicePreset || 'kind';
+}
 function speak(pickup){
   try{
     if(!window.speechSynthesis)return;
     const num=pickup.replace(/^[A-Za-z]+/,'').replace(/^0+/,'')||pickup;
-    const u=new SpeechSynthesisUtterance(num+'번 손님 픽업해주세요');
-    u.lang='ko-KR';u.rate=1;u.pitch=1;
+    const presetKey = getCurrentVoicePreset();
+    const preset = VOICE_PRESETS[presetKey] || VOICE_PRESETS.kind;
+    const u=new SpeechSynthesisUtterance(preset.text(num));
+    u.lang='ko-KR';
+    u.rate=preset.rate;
+    u.pitch=preset.pitch;
+    u.volume=1;
+    const voices = speechSynthesis.getVoices();
+    const koVoices = voices.filter(v => /ko/i.test(v.lang));
+    const preferred = koVoices.find(v => /female|여성|Heami|SunHi|InJoon|Yuna/i.test(v.name + ' ' + (v.voiceURI||'')))
+                   || koVoices[0];
+    if(preferred) u.voice = preferred;
     speechSynthesis.speak(u);
   }catch(e){}
 }
-// 카드 클릭 → 다시 호출 (벨 + TTS + 카드 깜빡임)
+function changeVoicePreset(key){
+  localStorage.setItem('displayVoicePreset', key);
+  // 테스트 재생
+  speak('A0005');
+  // 셀렉트 UI 갱신
+  const sel = document.getElementById('voice-preset-sel');
+  if(sel) sel.value = key;
+}
+// 카드 클릭 → 다시 호출 (벨 + TTS + 카드 깜빡임) — 처음 호출과 동일한 타이밍
 function recall(pickup){
   ding();
-  speak(pickup);
+  setTimeout(()=>speak(pickup), 400);
   try{
     const cards = document.querySelectorAll('.card-ready');
     cards.forEach(c => {
@@ -123,6 +165,7 @@ function fitAllHeadings(){
 window.addEventListener('resize', fitAllHeadings);
 setTimeout(fitAllHeadings, 50);
 
+
 let firstLoad=true;
 function render(d){
   if(d.sname)document.getElementById('sname').textContent=d.sname;
@@ -157,6 +200,10 @@ function startCloudSubscribe(){
   FT.menu().on('value',snap=>{
     const v=snap.val()||{};
     if(v.sname)document.getElementById('sname').textContent=v.sname;
+    // POS에서 푸시한 음성 프리셋 적용
+    if(v.event && v.event.displayVoicePreset && VOICE_PRESETS[v.event.displayVoicePreset]){
+      _pushedVoicePreset = v.event.displayVoicePreset;
+    }
   });
   FT.orders().on('value',snap=>{
     const v=snap.val()||{};
