@@ -19,7 +19,8 @@ main{flex:1;display:grid;grid-template-columns:1.6fr 1fr;gap:0;min-height:0;}
 .panel{padding:30px 40px;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
 .panel.ready{background:#0a1f0a;border-right:2px solid #1a3a1a;}
 .panel.cooking{background:#0a1228;}
-.panel h2{font-size:36px;font-weight:900;margin-bottom:20px;display:flex;align-items:center;gap:14px;}
+.panel h2{font-size:clamp(16px,2.4vw,32px);font-weight:900;margin-bottom:20px;display:flex;align-items:center;gap:8px;white-space:nowrap;overflow:hidden;}
+.panel h2 .count{flex-shrink:0;}
 .panel.ready h2{color:#7fff7f;}
 .panel.cooking h2{color:#7fc8ff;}
 .count{font-size:22px;background:rgba(255,255,255,.1);padding:4px 14px;border-radius:20px;}
@@ -35,12 +36,12 @@ footer .waiting{color:#ffb84d;font-weight:700;}
 </head>
 <body>
 <header>
-  <h1 id="sname">🍔 푸드트럭</h1>
+  <h1 id="sname">푸드트럭</h1>
   <div class="clock" id="clock">--:--</div>
 </header>
 <main>
   <section class="panel ready">
-    <h2>📢 픽업하세요 <span class="count" id="cnt-ready">0</span></h2>
+    <h2>📢 픽업 <span class="count" id="cnt-ready">0</span></h2>
     <div class="grid-ready" id="list-ready"><div class="empty">호출 대기 중인 주문이 없습니다</div></div>
   </section>
   <section class="panel cooking">
@@ -88,7 +89,7 @@ setInterval(tickClock,1000);tickClock();
 
 let firstLoad=true;
 function render(d){
-  if(d.sname)document.getElementById('sname').textContent='🍔 '+d.sname;
+  if(d.sname)document.getElementById('sname').textContent=d.sname;
   const ready=d.ready||[];
   document.getElementById('cnt-ready').textContent=ready.length;
   const elR=document.getElementById('list-ready');
@@ -119,7 +120,7 @@ function startCloudSubscribe(){
   if(typeof FT==='undefined')return false;
   FT.menu().on('value',snap=>{
     const v=snap.val()||{};
-    if(v.sname)document.getElementById('sname').textContent='🍔 '+v.sname;
+    if(v.sname)document.getElementById('sname').textContent=v.sname;
   });
   FT.orders().on('value',snap=>{
     const v=snap.val()||{};
@@ -127,7 +128,7 @@ function startCloudSubscribe(){
     const orders=Object.values(v).filter(o=>o&&o.createdAt&&new Date(o.createdAt).toDateString()===today);
     render({
       ok:true,
-      sname:document.getElementById('sname').textContent.replace(/^🍔\s*/,''),
+      sname:document.getElementById('sname').textContent,
       waiting:orders.filter(o=>o.status==='pending'||o.status==='paid').map(o=>o.pickup),
       cooking:orders.filter(o=>o.status==='cooking').map(o=>o.pickup),
       ready:orders.filter(o=>o.status==='ready').map(o=>o.pickup),
